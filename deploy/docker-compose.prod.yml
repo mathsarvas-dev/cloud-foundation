@@ -1,0 +1,78 @@
+# Produção na máquina B (Oracle): Caddy (HTTPS automático) + app + Postgres.
+# Nada de build aqui: as imagens vêm do GitHub Container Registry (ver .github/workflows/deploy.yml).
+#
+#   cp .env.prod.example .env      # preencha
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+name: integra-teens
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMINIO: ${DOMINIO:?defina DOMINIO no .env, por exemplo integra.seudominio.com.br}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_dados:/data       # certificados: não perder, senão reemite a cada subida
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 64m
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: integra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: integra
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Sem "ports": o banco só é acessível pela rede interna do Docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U integra -d integra"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Postgres enxuto para máquinas pequenas
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30", "-c", "work_mem=4MB"]
+    mem_limit: 256m
+
+  # Aplica o schema do Prisma e termina; o app só sobe depois.
+  migrate:
+    image: ${IMAGEM_MIGRATE:?defina IMAGEM_MIGRATE no .env}
+    environment:
+      DATABASE_URL: postgresql://integra:${POSTGRES_PASSWORD}@db:5432/integra
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: ${IMAGEM_APP:?defina IMAGEM_APP no .env}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://integra:${POSTGRES_PASSWORD}@db:5432/integra
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?defina BETTER_AUTH_SECRET no .env}
+      BETTER_AUTH_URL: https://${DOMINIO}
+      NODE_OPTIONS: --max-old-space-size=256
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3010/entrar').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    mem_limit: 384m
+
+volumes:
+  pgdata:
+  caddy_dados:
+  caddy_config:

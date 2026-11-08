@@ -1,0 +1,33 @@
+#cloud-config
+# Primeiro boot da VM do Mangr: Docker, fuso horário, swap e as portas 80/443 no firewall da própria máquina.
+# (O grupo de segurança da Oracle, que abre as mesmas portas na rede, é criado pelo create-arm-instance.sh.)
+timezone: America/Sao_Paulo
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - docker.io
+  - docker-compose-v2
+  - iptables-persistent
+
+write_files:
+  - path: /etc/sysctl.d/99-mangr.conf
+    content: |
+      vm.swappiness=10
+
+runcmd:
+  # As imagens Ubuntu da Oracle chegam com iptables fechando tudo menos a porta 22.
+  - iptables -I INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
+  - netfilter-persistent save
+  # Swap de 2 GB como rede de segurança (a RAM do plano ARM costuma sobrar).
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl --system
+  - usermod -aG docker ubuntu
+  - systemctl enable --now docker
+  - echo "mangr cloud-init concluído" > /var/log/mangr-init.done

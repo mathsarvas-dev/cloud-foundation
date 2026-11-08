@@ -1,0 +1,15 @@
+# O Caddy obtém e renova o certificado Let's Encrypt sozinho para {$DOMINIO}
+# (precisa de DNS apontando para esta máquina e das portas 80/443 abertas).
+{$DOMINIO} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy app:3010
+}
